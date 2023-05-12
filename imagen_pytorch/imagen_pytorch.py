@@ -33,9 +33,8 @@ def identity(t, *args, **kwargs):
 def maybe(fn):
     @wraps(fn)
     def inner(x):
-        if not exists(x):
-            return x
-        return fn(x)
+        return x if not exists(x) else fn(x)
+
     return inner
 
 def default(val, d):
@@ -67,9 +66,7 @@ def eval_decorator(fn):
 
 def pad_tuple_to_length(t, length, fillvalue = None):
     remain_length = length - len(t)
-    if remain_length <= 0:
-        return t
-    return (*t, *((fillvalue,) * remain_length))
+    return t if remain_length <= 0 else (*t, *((fillvalue,) * remain_length))
 
 # tensor helpers
 
@@ -81,9 +78,7 @@ def l2norm(t):
 
 def right_pad_dims_to(x, t):
     padding_dims = x.ndim - t.ndim
-    if padding_dims <= 0:
-        return t
-    return t.view(*t.shape, *((1,) * padding_dims))
+    return t if padding_dims <= 0 else t.view(*t.shape, *((1,) * padding_dims))
 
 def masked_mean(t, *, dim, mask = None):
     if not exists(mask):
@@ -206,12 +201,10 @@ class GaussianDiffusion(nn.Module):
         return times
 
     def get_sampling_timesteps(self, batch, *, device):
-        time_transitions = []
-
-        for i in reversed(range(self.num_timesteps)):
-            time_transitions.append((torch.full((batch,), i, device = device, dtype = torch.long), None))
-
-        return time_transitions
+        return [
+            (torch.full((batch,), i, device=device, dtype=torch.long), None)
+            for i in reversed(range(self.num_timesteps))
+        ]
 
     def q_posterior(self, x_start, x_t, t, **kwargs):
         posterior_mean = (
@@ -950,7 +943,12 @@ class Unet(nn.Module):
         layer_attns = cast_tuple(layer_attns, num_layers)
         layer_cross_attns = cast_tuple(layer_cross_attns, num_layers)
 
-        assert all([layers == num_layers for layers in list(map(len, (resnet_groups, layer_attns, layer_cross_attns)))])
+        assert all(
+            layers == num_layers
+            for layers in list(
+                map(len, (resnet_groups, layer_attns, layer_cross_attns))
+            )
+        )
 
         # downsample klass
 
@@ -988,7 +986,7 @@ class Unet(nn.Module):
         self.mid_attn = EinopsToAndFrom('b c h w', 'b (h w) c', Residual(Attention(mid_dim, **attn_kwargs))) if attend_at_middle else None
         self.mid_block2 = ResnetBlock(mid_dim, mid_dim, cond_dim = cond_dim, time_cond_dim = time_cond_dim, groups = resnet_groups[-1])
 
-        for ind, ((dim_in, dim_out), layer_num_resnet_blocks, groups, layer_attn, layer_cross_attn) in enumerate(zip(reversed(in_out[1:]), *reversed_layer_params)):
+        for (dim_in, dim_out), layer_num_resnet_blocks, groups, layer_attn, layer_cross_attn in zip(reversed(in_out[1:]), *reversed_layer_params):
             layer_cond_dim = cond_dim if layer_cross_attn else None
 
             self.ups.append(nn.ModuleList([
@@ -1063,8 +1061,12 @@ class Unet(nn.Module):
 
         # add low resolution conditioning, if present
 
-        assert not (self.lowres_cond and not exists(lowres_cond_img)), 'low resolution conditioning image must be present'
-        assert not (self.lowres_cond and not exists(lowres_noise_times)), 'low resolution conditioning noise time must be present'
+        assert not self.lowres_cond or exists(
+            lowres_cond_img
+        ), 'low resolution conditioning image must be present'
+        assert not self.lowres_cond or exists(
+            lowres_noise_times
+        ), 'low resolution conditioning noise time must be present'
 
         if exists(lowres_cond_img):
             x = torch.cat((x, lowres_cond_img), dim = 1)
@@ -1173,41 +1175,41 @@ class Unet(nn.Module):
 
 class BaseUnet64(Unet):
     def __init__(self, *args, **kwargs):
-        kwargs.update(dict(
-            dim = 512,
-            dim_mults = (1, 2, 3, 4),
-            num_resnet_blocks = 3,
-            layer_attns = (False, True, True, True),
-            layer_cross_attns = (False, True, True, True),
-            attn_heads = 8,
-            ff_mult = 2.,
-        ))
+        kwargs |= dict(
+            dim=512,
+            dim_mults=(1, 2, 3, 4),
+            num_resnet_blocks=3,
+            layer_attns=(False, True, True, True),
+            layer_cross_attns=(False, True, True, True),
+            attn_heads=8,
+            ff_mult=2.0,
+        )
         super().__init__(*args, **kwargs)
 
 class SRUnet256(Unet):
     def __init__(self, *args, **kwargs):
-        kwargs.update(dict(
-            dim = 128,
-            dim_mults = (1, 2, 4, 8),
-            num_resnet_blocks = (2, 4, 8, 8),
-            layer_attns = (False, False, False, True),
-            layer_cross_attns = (False, False, False, True),
-            attn_heads = 8,
-            ff_mult = 2.,
-        ))
+        kwargs |= dict(
+            dim=128,
+            dim_mults=(1, 2, 4, 8),
+            num_resnet_blocks=(2, 4, 8, 8),
+            layer_attns=(False, False, False, True),
+            layer_cross_attns=(False, False, False, True),
+            attn_heads=8,
+            ff_mult=2.0,
+        )
         super().__init__(*args, **kwargs)
 
 class SRUnet1024(Unet):
     def __init__(self, *args, **kwargs):
-        kwargs.update(dict(
-            dim = 128,
-            dim_mults = (1, 2, 4, 8),
-            num_resnet_blocks = (2, 4, 8, 8),
-            layer_attns = False,
-            layer_cross_attns = (False, False, False, True),
-            attn_heads = 8,
-            ff_mult = 2.,
-        ))
+        kwargs |= dict(
+            dim=128,
+            dim_mults=(1, 2, 4, 8),
+            num_resnet_blocks=(2, 4, 8, 8),
+            layer_attns=False,
+            layer_cross_attns=(False, False, False, True),
+            attn_heads=8,
+            ff_mult=2.0,
+        )
         super().__init__(*args, **kwargs)
 
 # main imagen ddpm class, which is a cascading DDPM from Ho et al.
@@ -1370,7 +1372,9 @@ class Imagen(nn.Module):
             unet.to(device)
 
     def p_mean_variance(self, unet, x, t, *, noise_scheduler, text_embeds = None, text_mask = None, lowres_cond_img = None, lowres_noise_times = None, cond_scale = 1., model_output = None, t_next = None):
-        assert not (cond_scale != 1. and not self.can_classifier_guidance), 'imagen was not trained with conditional dropout, and thus one cannot use classifier free guidance (cond_scale anything other than 1)'
+        assert (
+            cond_scale == 1.0 or self.can_classifier_guidance
+        ), 'imagen was not trained with conditional dropout, and thus one cannot use classifier free guidance (cond_scale anything other than 1)'
 
         pred = default(model_output, lambda: unet.forward_with_cond_scale(x, noise_scheduler.get_condition(t), text_embeds = text_embeds, text_mask = text_mask, cond_scale = cond_scale, lowres_cond_img = lowres_cond_img, lowres_noise_times = noise_scheduler.get_condition(lowres_noise_times)))
 
@@ -1451,8 +1455,12 @@ class Imagen(nn.Module):
         if not self.unconditional:
             batch_size = text_embeds.shape[0]
 
-        assert not (self.condition_on_text and not exists(text_embeds)), 'text or text encodings must be passed into imagen if specified'
-        assert not (not self.condition_on_text and exists(text_embeds)), 'imagen specified not to be conditioned on text, yet it is presented'
+        assert not self.condition_on_text or exists(
+            text_embeds
+        ), 'text or text encodings must be passed into imagen if specified'
+        assert self.condition_on_text or not exists(
+            text_embeds
+        ), 'imagen specified not to be conditioned on text, yet it is presented'
         assert not (exists(text_embeds) and text_embeds.shape[-1] != self.text_embed_dim), f'invalid text embedding dimension being passed in (should be {self.text_embed_dim})'
 
         outputs = []
